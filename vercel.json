@@ -3,7 +3,10 @@
   "outputDirectory": "artifacts/app/dist/public",
   "installCommand": "pnpm install",
   "framework": null,
-  "env": {
-    "BASE_PATH": "/"
+  "build": {
+    "env": {
+      "BASE_PATH": "/",
+      "PORT": "3000"
+    }
   }
 }
