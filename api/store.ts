@@ -1,17 +1,23 @@
 import { Redis } from "@upstash/redis";
 
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
+// 支援兩種環境變數名稱：
+//   Vercel KV（官方）：KV_REST_API_URL / KV_REST_API_TOKEN
+//   Upstash 直接整合：UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
+const url =
+  process.env.KV_REST_API_URL ||
+  process.env.UPSTASH_REDIS_REST_URL ||
+  "";
+const token =
+  process.env.KV_REST_API_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  "";
+
+const redis = new Redis({ url, token });
 
 // 資料存取 API：GET 讀取、PUT/POST 寫入
 // 呼叫方式：
 //   GET  /api/store?key=holdings
 //   PUT  /api/store   body: { key: "holdings", value: "...JSON字串..." }
-//
-// 這支 API 沒有帳號登入機制，任何知道網址的人理論上都能讀寫這份資料，
-// 適合個人自用；如果之後要多人使用或更嚴謹，需要另外加上驗證機制。
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -20,6 +26,14 @@ export default async function handler(req: any, res: any) {
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
+  }
+
+  // 若環境變數未設定，回傳明確錯誤
+  if (!url || !token) {
+    return res.status(500).json({
+      error: "Redis env vars not set",
+      hint: "Set KV_REST_API_URL+KV_REST_API_TOKEN or UPSTASH_REDIS_REST_URL+UPSTASH_REDIS_REST_TOKEN in Vercel",
+    });
   }
 
   try {
