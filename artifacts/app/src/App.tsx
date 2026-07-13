@@ -90,24 +90,6 @@ function buildDailyHistory(numPoints, endValue, stepDays, volatility) {
   return arr;
 }
 
-// 本機儲存包裝（取代 Claude Artifact 專屬的 window.storage，改用瀏覽器原生 localStorage）
-async function storageGet(key) {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? null : { value: v };
-  } catch (e) {
-    return null;
-  }
-}
-async function storageSet(key, value) {
-  try {
-    localStorage.setItem(key, value);
-    return { value };
-  } catch (e) {
-    return null;
-  }
-}
-
 const RANGE_LABELS = [
   { key: "day", label: "每日" },
   { key: "week", label: "每週" },
@@ -119,6 +101,34 @@ const VIEW_LABELS = [
   { key: "trend", label: "資產走勢" },
   { key: "allocation", label: "標的佔比" },
 ];
+
+// 雲端儲存包裝（改用同一個 Vercel 專案裡的 /api/store，讓手機、電腦看到同一份資料）
+async function storageGet(key) {
+  try {
+    const res = await fetch(`/api/store?key=${encodeURIComponent(key)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data.value !== undefined && data.value !== null) {
+      return { value: data.value };
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+async function storageSet(key, value) {
+  try {
+    const res = await fetch("/api/store", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    });
+    if (!res.ok) return null;
+    return { value };
+  } catch (e) {
+    return null;
+  }
+}
 
 const emptyForm = { symbol: "", name: "", qty: "", cost: "", amount: "", mode: "qty", bank: "", market: "TW" };
 const emptyExpenseForm = { date: todayStr(), category: EXPENSE_CATEGORIES[0], amount: "", note: "" };
@@ -227,8 +237,9 @@ export default function App() {
     async function tick() {
       if (apiBaseUrl) {
         try {
+          const cleanBase = apiBaseUrl.trim().replace(/\/$/, "");
           const symbolsParam = holdings.map((h) => `${h.market || "TW"}:${h.symbol}`).join(",");
-          const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/quotes?symbols=${encodeURIComponent(symbolsParam)}`);
+          const res = await fetch(`${cleanBase}/api/quotes?symbols=${encodeURIComponent(symbolsParam)}`);
           if (!res.ok) throw new Error("bad response");
           const data = await res.json();
           setLive((prev) => {
@@ -442,8 +453,9 @@ export default function App() {
     persistSettings(v, apiBaseUrl);
   }
   function saveApiBaseUrl(v) {
-    setApiBaseUrl(v);
-    persistSettings(threshold, v);
+    const clean = v.trim();
+    setApiBaseUrl(clean);
+    persistSettings(threshold, clean);
   }
 
   function openAddExpense() {
