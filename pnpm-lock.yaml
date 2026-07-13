@@ -160,6 +160,9 @@ importers:
       '@replit/connectors-sdk':
         specifier: ^0.4.1
         version: 0.4.1
+      '@upstash/redis':
+        specifier: ^1.38.0
+        version: 1.38.0
     devDependencies:
       prettier:
         specifier: ^3.9.4
