@@ -1,6 +1,6 @@
 {
-  "buildCommand": "pnpm --filter @workspace/app run build && cp -r artifacts/app/dist/public dist",
-  "outputDirectory": "dist",
+  "buildCommand": "pnpm --filter @workspace/app run build",
+  "outputDirectory": "artifacts/app/dist/public",
   "installCommand": "pnpm install",
   "framework": null,
   "build": {
@@ -9,7 +9,8 @@
       "PORT": "3000"
     }
   },
-  "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
