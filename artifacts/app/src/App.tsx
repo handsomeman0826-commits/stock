@@ -646,9 +646,9 @@ export default function App() {
           color:var(--accent-hi); display:flex; align-items:center; justify-content:center; flex:none; }
         .pw-bank-name{ font-size:13.5px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .pw-bank-sub{ font-size:13px; color:var(--muted); margin-top:2px; white-space:nowrap; line-height:1.4; }
-        .pw-bank-right{ text-align:right; flex:none; }
-        .pw-bank-value{ font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:400; color:var(--ink); line-height:1.4; }
-        .pw-bank-gain{ font-family:'IBM Plex Mono',monospace; font-size:13px; margin-top:2px; line-height:1.4; }
+        .pw-bank-right{ display:flex; flex-direction:column; align-items:flex-end; flex:none; }
+        .pw-bank-value{ font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:400; color:var(--ink); line-height:1.4; white-space:nowrap; }
+        .pw-bank-gain{ font-family:'IBM Plex Mono',monospace; font-size:13px; margin-top:2px; line-height:1.4; white-space:nowrap; }
         .pw-pie-wrap{ display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:center; }
         @media (max-width:640px){ .pw-pie-wrap{ grid-template-columns:1fr; } }
         .pw-pie-legend{ display:flex; flex-direction:column; gap:7px; max-height:220px; overflow-y:auto; }
