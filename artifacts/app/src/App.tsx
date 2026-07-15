@@ -644,7 +644,7 @@ export default function App() {
         .pw-bank-icon{ width:34px; height:34px; border-radius:9px; background:rgba(193,103,30,0.14);
           color:var(--accent-hi); display:flex; align-items:center; justify-content:center; flex:none; }
         .pw-bank-name{ font-size:13.5px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .pw-bank-sub{ font-size:11px; color:var(--muted); margin-top:2px; white-space:nowrap; }
+        .pw-bank-sub{ font-size:13px; color:var(--muted); margin-top:2px; white-space:nowrap; }
         .pw-bank-right{ text-align:right; flex:none; }
         .pw-bank-value{ font-family:'IBM Plex Mono',monospace; font-size:14.5px; font-weight:600; color:var(--ink); }
         .pw-bank-gain{ font-family:'IBM Plex Mono',monospace; font-size:11.5px; margin-top:2px; }
@@ -848,7 +848,8 @@ export default function App() {
                   <div className="pw-bank-icon"><Landmark size={16} /></div>
                   <div style={{ minWidth: 0 }}>
                     <div className="pw-bank-name">{b.bank}</div>
-                    <div className="pw-bank-sub">{b.count} 檔持股 · 成本 {money(b.cost)}</div>
+                    <div className="pw-bank-sub">{b.count} 檔持股</div>
+                    <div className="pw-bank-sub">成本 {money(b.cost)}</div>
                   </div>
                 </div>
                 <div className="pw-bank-right">
