@@ -644,11 +644,11 @@ export default function App() {
         .pw-bank-left{ display:flex; align-items:center; gap:10px; min-width:0; }
         .pw-bank-icon{ width:34px; height:34px; border-radius:9px; background:rgba(193,103,30,0.14);
           color:var(--accent-hi); display:flex; align-items:center; justify-content:center; flex:none; }
-        .pw-bank-name{ font-size:13.5px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .pw-bank-sub{ font-size:13px; color:var(--muted); margin-top:2px; white-space:nowrap; line-height:1.4; }
-        .pw-bank-right{ display:flex; flex-direction:column; align-items:flex-end; flex:none; }
-        .pw-bank-value{ font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:400; color:var(--ink); line-height:1.4; white-space:nowrap; }
-        .pw-bank-gain{ font-family:'IBM Plex Mono',monospace; font-size:13px; margin-top:2px; line-height:1.4; white-space:nowrap; }
+        .pw-bank-name{ font-size:12.5px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .pw-bank-sub{ font-size:12px; color:var(--muted); margin-top:2px; white-space:nowrap; line-height:1.4; }
+        .pw-bank-right{ display:flex; flex-direction:column; align-items:flex-end; flex:none; text-align:right; }
+        .pw-bank-value{ font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:400; color:var(--ink); line-height:1.4; white-space:nowrap; }
+        .pw-bank-gain{ font-family:'IBM Plex Mono',monospace; font-size:12px; margin-top:2px; line-height:1.4; white-space:nowrap; }
         .pw-pie-wrap{ display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:center; }
         @media (max-width:640px){ .pw-pie-wrap{ grid-template-columns:1fr; } }
         .pw-pie-legend{ display:flex; flex-direction:column; gap:7px; max-height:220px; overflow-y:auto; }
