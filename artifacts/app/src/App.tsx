@@ -637,7 +637,7 @@ export default function App() {
         .pw-bank-cards{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:22px; }
         .pw-bank-card{ background:var(--surface); border:1px solid var(--line); border-radius:14px;
           padding:14px 16px; display:flex; justify-content:space-between; align-items:flex-end; gap:10px;
-          flex:1 1 230px; min-width:230px;
+          flex:1 1 230px; min-width:230px; overflow:hidden;
           cursor:pointer; transition:border-color .15s, background .15s; }
         .pw-bank-card:hover{ border-color:var(--accent); }
         .pw-bank-card.selected{ border-color:var(--accent); background:rgba(193,103,30,0.10); }
