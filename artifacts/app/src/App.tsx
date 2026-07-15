@@ -146,6 +146,7 @@ export default function App() {
   const [confirmClearMarket, setConfirmClearMarket] = useState(false);
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [usdTwdRate, setUsdTwdRate] = useState<number>(32); // 預設匯率，待 API 更新
   const [quoteMode, setQuoteMode] = useState("simulated"); // "simulated" | "live" | "error"
   const [log, setLog] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -219,6 +220,22 @@ export default function App() {
       setExpenses(ex);
       setLoaded(true);
     })();
+  }, []);
+
+  // 每天自動抓一次美元兌台幣匯率
+  useEffect(() => {
+    async function fetchRate() {
+      try {
+        const res = await fetch("/api/fxrate");
+        if (!res.ok) return;
+        const { rate } = await res.json();
+        if (typeof rate === "number" && rate > 0) setUsdTwdRate(rate);
+      } catch (e) { /* 網路問題就用預設值 */ }
+    }
+    fetchRate();
+    // 每 24 小時重抓一次
+    const timer = setInterval(fetchRate, 24 * 60 * 60 * 1000);
+    return () => clearInterval(timer);
   }, []);
 
   const persistHoldings = useCallback(async (hs) => {
@@ -306,17 +323,23 @@ export default function App() {
 
   const rows = holdings.map((h) => {
     const l = live[h.id] || { price: h.cost, prevClose: h.cost, alertDismissed: false };
-    const value = l.price * h.qty;
+    const isUs = (h.market || "TW") === "US";
+    const fx = isUs ? usdTwdRate : 1;           // 美股乘以匯率換台幣
+    const value = l.price * h.qty;              // 原幣市值（美股為 USD）
+    const valueTwd = value * fx;                // 台幣市值（台股不變）
     const costValue = h.cost * h.qty;
-    const gain = value - costValue;
+    const costTwd = costValue * fx;
+    const gain = value - costValue;             // 原幣損益
+    const gainTwd = gain * fx;                  // 台幣損益
     const gainPct = costValue > 0 ? (gain / costValue) * 100 : 0;
     const dayChangePct = l.prevClose > 0 ? ((l.price - l.prevClose) / l.prevClose) * 100 : 0;
     const isAlert = dayChangePct <= -threshold && !l.alertDismissed;
-    return { ...h, live: l, value, gain, gainPct, dayChangePct, isAlert };
+    return { ...h, live: l, value, valueTwd, gain, gainTwd, gainPct, costTwd, dayChangePct, isAlert };
   });
 
-  const totalValue = rows.reduce((s, r) => s + r.value, 0);
-  const totalCost = rows.reduce((s, r) => s + r.cost * r.qty, 0);
+  // 加總一律用台幣（美股已換算）
+  const totalValue = rows.reduce((s, r) => s + r.valueTwd, 0);
+  const totalCost = rows.reduce((s, r) => s + r.costTwd, 0);
   const totalGain = totalValue - totalCost;
   const totalGainPct = totalCost > 0 ? (totalGain / totalCost) * 100 : 0;
   const alerts = rows.filter((r) => r.isAlert);
@@ -325,8 +348,8 @@ export default function App() {
   rows.forEach((r) => {
     const b = r.bank && r.bank.trim() ? r.bank.trim() : UNCATEGORIZED;
     if (!bankMap[b]) bankMap[b] = { bank: b, value: 0, cost: 0, count: 0 };
-    bankMap[b].value += r.value;
-    bankMap[b].cost += r.cost * r.qty;
+    bankMap[b].value += r.valueTwd;   // 台幣加總
+    bankMap[b].cost += r.costTwd;
     bankMap[b].count += 1;
   });
   const bankRows = Object.values(bankMap)
@@ -335,8 +358,8 @@ export default function App() {
   const uniqueBanks = [...new Set(holdings.map((h) => h.bank).filter(Boolean))];
 
   const pieData = rows
-    .filter((r) => r.value > 0)
-    .map((r) => ({ key: r.id, label: `${r.symbol} ${r.name}`, value: r.value }))
+    .filter((r) => r.valueTwd > 0)
+    .map((r) => ({ key: r.id, label: `${r.symbol} ${r.name}`, value: r.valueTwd }))
     .sort((a, b) => b.value - a.value);
 
   const marketRows = rows.filter((r) => (r.market || "TW") === assetMarketTab);
