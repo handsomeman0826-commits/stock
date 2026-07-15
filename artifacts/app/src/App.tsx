@@ -78,17 +78,18 @@ function simulateNextPrice(price) {
   const next = price * (1 + drift);
   return Math.max(next, 0.1);
 }
-function buildDailyHistory(numPoints, endValue, stepDays, volatility) {
-  const today = new Date();
-  let v = endValue * (0.85 + Math.random() * 0.1);
-  const arr = [];
-  for (let i = numPoints - 1; i >= 0; i--) {
-    v = v * (1 + (Math.random() - 0.48) * volatility);
-    const d = new Date(today);
-    d.setDate(d.getDate() - i * stepDays);
-    arr.push({ t: dateLabel(d), v: i === 0 ? Math.round(endValue) : Math.round(v) });
-  }
-  return arr;
+// 從真實歷史資料切出圖表用的陣列
+function historySlice(ah: { date: string; v: number }[], days: number) {
+  return ah.slice(-days).map((h) => ({ t: h.date.slice(5).replace("-", "/"), v: h.v }));
+}
+function historySliceWeekly(ah: { date: string; v: number }[], weeks: number) {
+  // 每 7 筆取一筆，再加最後一筆
+  const pool = ah.slice(-(weeks * 7));
+  const result: { t: string; v: number }[] = [];
+  for (let i = 0; i < pool.length; i += 7) result.push({ t: pool[i].date.slice(5).replace("-", "/"), v: pool[i].v });
+  if (pool.length && result[result.length - 1]?.t !== pool[pool.length - 1].date.slice(5).replace("-", "/"))
+    result.push({ t: pool[pool.length - 1].date.slice(5).replace("-", "/"), v: pool[pool.length - 1].v });
+  return result;
 }
 
 const RANGE_LABELS = [
@@ -144,6 +145,7 @@ export default function App() {
   const [heroView, setHeroView] = useState("overview");
   const [chartRange, setChartRange] = useState("day");
   const [assetMarketTab, setAssetMarketTab] = useState("TW");
+  const [assetHistory, setAssetHistory] = useState<{ date: string; v: number }[]>([]);
   const [selectedBankFilter, setSelectedBankFilter] = useState(null);
   const [confirmClearMarket, setConfirmClearMarket] = useState(false);
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
@@ -202,6 +204,11 @@ export default function App() {
         const r4 = await storageGet("log");
         if (r4 && r4.value) lg = JSON.parse(r4.value);
       } catch (e) { /* 尚無資料，預設為空 */ }
+      let ah: { date: string; v: number }[] = [];
+      try {
+        const r5 = await storageGet("assetHistory");
+        if (r5 && r5.value) ah = JSON.parse(r5.value);
+      } catch (e) { /* 尚無資料，預設為空 */ }
 
       const liveInit = {};
       hs.forEach((h) => {
@@ -215,22 +222,18 @@ export default function App() {
       });
       const total0 = hs.reduce((s, h) => s + (liveInit[h.id]?.price ?? h.cost) * h.qty, 0);
 
-      const dayHist = [];
-      let v = total0 * (0.95 + Math.random() * 0.03);
-      for (let i = 14; i >= 0; i--) {
-        v = v * (1 + (Math.random() - 0.48) * 0.01);
-        dayHist.push({ t: `D-${i}`, v: Math.round(i === 0 ? total0 : v) });
-      }
-      const weekHist = buildDailyHistory(7, total0, 1, 0.02);
-      const monthHist = buildDailyHistory(30, total0, 1, 0.018);
-      const quarterHist = buildDailyHistory(13, total0, 7, 0.045);
+      // 盤中走勢（day）仍用盤中 tick 即時更新，先給空陣列
+      const weekHist = historySlice(ah, 7);
+      const monthHist = historySlice(ah, 30);
+      const quarterHist = historySliceWeekly(ah, 13);
 
       setHoldings(hs);
       setLive(liveInit);
       setThreshold(th);
       setUsdRate(usd);
       setApiBaseUrl(api);
-      setHistories({ day: dayHist, week: weekHist, month: monthHist, quarter: quarterHist });
+      setHistories({ day: [], week: weekHist, month: monthHist, quarter: quarterHist });
+      setAssetHistory(ah);
       setExpenses(ex);
       setLog(lg);
       setLoaded(true);
@@ -248,6 +251,9 @@ export default function App() {
   }, []);
   const persistLog = useCallback(async (lg) => {
     try { await storageSet("log", JSON.stringify(lg)); } catch (e) { /* 略過儲存失敗 */ }
+  }, []);
+  const persistAssetHistory = useCallback(async (ah: { date: string; v: number }[]) => {
+    try { await storageSet("assetHistory", JSON.stringify(ah)); } catch (e) { /* 略過儲存失敗 */ }
   }, []);
 
   useEffect(() => {
@@ -305,6 +311,34 @@ export default function App() {
   useEffect(() => {
     thresholdRef.current = threshold;
   }, [threshold]);
+
+  // 每天第一次開 App 時，記錄當天的總市值快照（台幣）
+  useEffect(() => {
+    if (!loaded) return;
+    const todayTWD = Math.round(
+      holdings.reduce((s, h) => {
+        const price = live[h.id]?.price ?? h.cost;
+        const fx = (h.market || "TW") === "US" ? usdRate : 1;
+        return s + price * h.qty * fx;
+      }, 0)
+    );
+    if (todayTWD <= 0) return;
+    const today = todayStr();
+    setAssetHistory((prev) => {
+      if (prev.length > 0 && prev[prev.length - 1].date === today) return prev; // 今天已記錄
+      const next = [...prev, { date: today, v: todayTWD }].slice(-400); // 最多保留 400 天
+      persistAssetHistory(next);
+      // 同步更新圖表
+      setHistories((h) => ({
+        ...h,
+        week: historySlice(next, 7),
+        month: historySlice(next, 30),
+        quarter: historySliceWeekly(next, 13),
+      }));
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   useEffect(() => {
     if (!loaded || !apiBaseUrl) return;
