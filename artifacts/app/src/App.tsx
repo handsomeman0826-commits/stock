@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   Settings, Plus, X, Trash2, TrendingUp, TrendingDown, AlertTriangle,
-  ShoppingCart, XCircle, Minus, Search, Landmark, Receipt, Pencil,
+  ShoppingCart, XCircle, Minus, Search, Landmark, Receipt, Pencil, ArrowLeftRight,
 } from "lucide-react";
 
 const DEFAULT_THRESHOLD = 7;
@@ -156,6 +156,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [showTrade, setShowTrade] = useState(false);
+  const [tradeRow, setTradeRow] = useState(null);
+  const [tradeForm, setTradeForm] = useState({ mode: "buy", qty: "", price: "" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const tickRef = useRef(null);
@@ -177,6 +180,7 @@ export default function App() {
       let usd = DEFAULT_USD_RATE;
       let api = "";
       let ex = [];
+      let lg = [];
       try {
         const r = await storageGet("holdings");
         if (r && r.value) hs = JSON.parse(r.value);
@@ -193,6 +197,10 @@ export default function App() {
       try {
         const r3 = await storageGet("expenses");
         if (r3 && r3.value) ex = JSON.parse(r3.value);
+      } catch (e) { /* 尚無資料，預設為空 */ }
+      try {
+        const r4 = await storageGet("log");
+        if (r4 && r4.value) lg = JSON.parse(r4.value);
       } catch (e) { /* 尚無資料，預設為空 */ }
 
       const liveInit = {};
@@ -224,6 +232,7 @@ export default function App() {
       setApiBaseUrl(api);
       setHistories({ day: dayHist, week: weekHist, month: monthHist, quarter: quarterHist });
       setExpenses(ex);
+      setLog(lg);
       setLoaded(true);
     })();
   }, []);
@@ -236,6 +245,9 @@ export default function App() {
   }, []);
   const persistExpenses = useCallback(async (ex) => {
     try { await storageSet("expenses", JSON.stringify(ex)); } catch (e) { /* 略過儲存失敗 */ }
+  }, []);
+  const persistLog = useCallback(async (lg) => {
+    try { await storageSet("log", JSON.stringify(lg)); } catch (e) { /* 略過儲存失敗 */ }
   }, []);
 
   useEffect(() => {
@@ -400,13 +412,18 @@ export default function App() {
     setLive((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }
   function addLog(entry) {
-    setLog((prev) => [{ time: nowLabel(), ...entry }, ...prev].slice(0, 12));
+    setLog((prev) => {
+      const next = [{ time: nowLabel(), date: todayStr(), ...entry }, ...prev].slice(0, 20);
+      persistLog(next);
+      return next;
+    });
   }
   function handleSell(row) {
     const newHoldings = holdings.filter((h) => h.id !== row.id);
     setHoldings(newHoldings);
     persistHoldings(newHoldings);
-    addLog({ action: "賣出", symbol: row.symbol, name: row.name, price: row.live.price });
+    const gain = (row.live.price - row.cost) * row.qty;
+    addLog({ action: "賣出", symbol: row.symbol, name: row.name, price: row.live.price, qty: row.qty, market: row.market, gain });
   }
   function handleBuyDip(row) {
     const addQty = Math.max(1, Math.round(row.qty * 0.5));
@@ -417,12 +434,52 @@ export default function App() {
     setHoldings(newHoldings);
     persistHoldings(newHoldings);
     updateLive(row.id, { prevClose: row.live.price, alertDismissed: true });
-    addLog({ action: "加碼買入", symbol: row.symbol, name: row.name, price: row.live.price, qty: addQty });
+    addLog({ action: "加碼買入", symbol: row.symbol, name: row.name, price: row.live.price, qty: addQty, market: row.market });
   }
   function handleDelete(id) {
     const newHoldings = holdings.filter((h) => h.id !== id);
     setHoldings(newHoldings);
     persistHoldings(newHoldings);
+  }
+  function openTrade(row) {
+    setTradeRow(row);
+    setTradeForm({ mode: "buy", qty: "", price: row.live.price.toFixed(2) });
+    setShowTrade(true);
+  }
+  function submitTrade() {
+    if (!tradeRow) return;
+    const qty = parseFloat(tradeForm.qty);
+    const price = parseFloat(tradeForm.price);
+    if (!qty || qty <= 0 || !price || price <= 0) return;
+
+    if (tradeForm.mode === "buy") {
+      const newCost = (tradeRow.cost * tradeRow.qty + price * qty) / (tradeRow.qty + qty);
+      const newHoldings = holdings.map((h) =>
+        h.id === tradeRow.id ? { ...h, qty: h.qty + qty, cost: newCost } : h
+      );
+      setHoldings(newHoldings);
+      persistHoldings(newHoldings);
+      updateLive(tradeRow.id, { price });
+      addLog({ action: "買入", symbol: tradeRow.symbol, name: tradeRow.name, price, qty, market: tradeRow.market });
+    } else {
+      const sellQty = Math.min(qty, tradeRow.qty);
+      const gain = (price - tradeRow.cost) * sellQty;
+      if (sellQty >= tradeRow.qty) {
+        const newHoldings = holdings.filter((h) => h.id !== tradeRow.id);
+        setHoldings(newHoldings);
+        persistHoldings(newHoldings);
+      } else {
+        const newHoldings = holdings.map((h) =>
+          h.id === tradeRow.id ? { ...h, qty: h.qty - sellQty } : h
+        );
+        setHoldings(newHoldings);
+        persistHoldings(newHoldings);
+        updateLive(tradeRow.id, { price });
+      }
+      addLog({ action: "賣出", symbol: tradeRow.symbol, name: tradeRow.name, price, qty: sellQty, market: tradeRow.market, gain });
+    }
+    setShowTrade(false);
+    setTradeRow(null);
   }
   function clearMarketHoldings(market) {
     const newHoldings = holdings.filter((h) => (h.market || "TW") !== market);
@@ -625,7 +682,7 @@ export default function App() {
           color:var(--accent-hi); background:rgba(193,103,30,0.12); border-radius:6px; padding:2px 8px; }
         .pw-gain{ color:var(--gain); } .pw-loss{ color:var(--loss); }
         .pw-row-actions{ display:flex; gap:10px; justify-content:flex-end; align-items:center; }
-        .pw-row-icon{ background:none; border:none; cursor:pointer; color:var(--muted); padding:4px; font-family:'Noto Sans TC',sans-serif; font-size:12.5px; }
+        .pw-row-icon{ background:none; border:none; cursor:pointer; color:var(--muted); padding:4px; font-family:'Noto Sans TC',sans-serif; font-size:12.5px; display:inline-flex; align-items:center; gap:4px; }
         .pw-row-icon:hover{ color:var(--accent-hi); }
         .pw-confirm-del{ color:var(--gain); font-weight:700; white-space:nowrap; }
         .pw-confirm-del:hover{ color:var(--gain); opacity:0.8; }
@@ -637,18 +694,18 @@ export default function App() {
         .pw-bank-cards{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:22px; }
         .pw-bank-card{ background:var(--surface); border:1px solid var(--line); border-radius:14px;
           padding:14px 16px; display:flex; justify-content:space-between; align-items:flex-end; gap:10px;
-          flex:1 1 230px; min-width:230px; overflow:hidden;
+          flex:1 1 230px; min-width:230px;
           cursor:pointer; transition:border-color .15s, background .15s; }
         .pw-bank-card:hover{ border-color:var(--accent); }
         .pw-bank-card.selected{ border-color:var(--accent); background:rgba(193,103,30,0.10); }
         .pw-bank-left{ display:flex; align-items:center; gap:10px; min-width:0; }
         .pw-bank-icon{ width:34px; height:34px; border-radius:9px; background:rgba(193,103,30,0.14);
           color:var(--accent-hi); display:flex; align-items:center; justify-content:center; flex:none; }
-        .pw-bank-name{ font-size:12.5px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .pw-bank-sub{ font-size:12px; color:var(--muted); margin-top:2px; white-space:nowrap; line-height:1.4; }
-        .pw-bank-right{ display:flex; flex-direction:column; align-items:flex-end; flex:none; text-align:right; }
-        .pw-bank-value{ font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:400; color:var(--ink); line-height:1.4; white-space:nowrap; }
-        .pw-bank-gain{ font-family:'IBM Plex Mono',monospace; font-size:12px; margin-top:2px; line-height:1.4; white-space:nowrap; }
+        .pw-bank-name{ font-size:13.5px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .pw-bank-sub{ font-size:13px; color:var(--muted); margin-top:2px; white-space:nowrap; line-height:1.4; }
+        .pw-bank-right{ text-align:right; flex:none; }
+        .pw-bank-value{ font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:400; color:var(--ink); line-height:1.4; }
+        .pw-bank-gain{ font-family:'IBM Plex Mono',monospace; font-size:13px; margin-top:2px; line-height:1.4; }
         .pw-pie-wrap{ display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:center; }
         @media (max-width:640px){ .pw-pie-wrap{ grid-template-columns:1fr; } }
         .pw-pie-legend{ display:flex; flex-direction:column; gap:7px; max-height:220px; overflow-y:auto; }
@@ -942,6 +999,9 @@ export default function App() {
                       <td className={row.gain >= 0 ? "pw-gain" : "pw-loss"}>{moneyFor(row.gain, row.market)}（{pct(row.gainPct)}）</td>
                       <td>
                         <div className="pw-row-actions">
+                          <button className="pw-row-icon" onClick={() => openTrade(row)} aria-label="交易">
+                            <ArrowLeftRight size={14} /> 交易
+                          </button>
                           <button className="pw-row-icon" onClick={() => openEdit(row)} aria-label="編輯">編輯</button>
                           <button className="pw-row-icon" onClick={() => handleDelete(row.id)} aria-label="刪除">
                             <Trash2 size={15} />
@@ -962,8 +1022,12 @@ export default function App() {
             ) : (
               log.map((l, i) => (
                 <div className="pw-log-item" key={i}>
-                  <span>{l.time} · {l.action} {l.symbol} {l.name}{l.qty ? `（${l.qty}股）` : ""}</span>
-                  <span>@{l.price.toFixed(2)}</span>
+                  <span>{l.date} {l.time} · {l.action} {l.symbol} {l.name}{l.qty ? `（${l.qty}股）` : ""} @{l.price.toFixed(2)}</span>
+                  {typeof l.gain === "number" ? (
+                    <span style={{ color: l.gain >= 0 ? "var(--gain)" : "var(--loss)" }}>{moneyFor(l.gain, l.market)}（損益）</span>
+                  ) : (
+                    <span className="pw-log-empty">—</span>
+                  )}
                 </div>
               ))
             )}
@@ -1065,6 +1129,47 @@ export default function App() {
                 <div className="pw-modal-actions">
                   <button className="pw-btn-secondary" onClick={() => setShowAdd(false)}>取消</button>
                   <button className="pw-btn-primary" onClick={submitForm}>{editing ? "儲存變更" : "新增"}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showTrade && tradeRow && (
+            <div className="pw-overlay" onClick={() => setShowTrade(false)}>
+              <div className="pw-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>{tradeRow.symbol} {tradeRow.name}
+                  <button className="pw-row-icon" onClick={() => setShowTrade(false)} aria-label="關閉"><X size={18} /></button>
+                </h3>
+                <p className="pw-hint" style={{ marginTop: 0 }}>
+                  目前持有 {tradeRow.qty} 股 · 成本價 {tradeRow.cost.toFixed(2)} · {tradeRow.bank || UNCATEGORIZED}
+                </p>
+                <div className="pw-segment">
+                  <button className={tradeForm.mode === "buy" ? "active" : ""} onClick={() => setTradeForm({ ...tradeForm, mode: "buy" })}>
+                    買入
+                  </button>
+                  <button className={tradeForm.mode === "sell" ? "active" : ""} onClick={() => setTradeForm({ ...tradeForm, mode: "sell" })}>
+                    賣出
+                  </button>
+                </div>
+                <div className="pw-field">
+                  <label>股數</label>
+                  <input type="number" value={tradeForm.qty} onChange={(e) => setTradeForm({ ...tradeForm, qty: e.target.value })} placeholder="例如 100" />
+                </div>
+                <div className="pw-field">
+                  <label>價格（每股）</label>
+                  <input type="number" value={tradeForm.price} onChange={(e) => setTradeForm({ ...tradeForm, price: e.target.value })} placeholder="例如 106.30" />
+                </div>
+                {tradeForm.mode === "sell" && parseFloat(tradeForm.qty) > 0 && parseFloat(tradeForm.price) > 0 && (
+                  <p className="pw-derived">
+                    這筆損益約為{" "}
+                    <b style={{ color: (parseFloat(tradeForm.price) - tradeRow.cost) * Math.min(parseFloat(tradeForm.qty), tradeRow.qty) >= 0 ? "var(--gain)" : "var(--loss)" }}>
+                      {moneyFor((parseFloat(tradeForm.price) - tradeRow.cost) * Math.min(parseFloat(tradeForm.qty), tradeRow.qty), tradeRow.market)}
+                    </b>
+                  </p>
+                )}
+                <div className="pw-modal-actions">
+                  <button className="pw-btn-secondary" onClick={() => setShowTrade(false)}>取消</button>
+                  <button className="pw-btn-primary" onClick={submitTrade}>確認{tradeForm.mode === "buy" ? "買入" : "賣出"}</button>
                 </div>
               </div>
             </div>
