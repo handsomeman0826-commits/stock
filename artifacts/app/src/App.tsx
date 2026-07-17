@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   Settings, Plus, X, Trash2, TrendingUp, TrendingDown, AlertTriangle,
-  ShoppingCart, XCircle, Minus, Search, Landmark, Receipt, Pencil, ArrowLeftRight,
+  Minus, Search, Landmark, Receipt, Pencil, ArrowLeftRight,
 } from "lucide-react";
 
 const DEFAULT_THRESHOLD = 7;
@@ -455,24 +455,7 @@ export default function App() {
       return next;
     });
   }
-  function handleSell(row) {
-    const newHoldings = holdings.filter((h) => h.id !== row.id);
-    setHoldings(newHoldings);
-    persistHoldings(newHoldings);
-    const gain = (row.live.price - row.cost) * row.qty;
-    addLog({ action: "賣出", symbol: row.symbol, name: row.name, price: row.live.price, qty: row.qty, market: row.market, gain });
-  }
-  function handleBuyDip(row) {
-    const addQty = Math.max(1, Math.round(row.qty * 0.5));
-    const newCost = (row.cost * row.qty + row.live.price * addQty) / (row.qty + addQty);
-    const newHoldings = holdings.map((h) =>
-      h.id === row.id ? { ...h, qty: h.qty + addQty, cost: newCost } : h
-    );
-    setHoldings(newHoldings);
-    persistHoldings(newHoldings);
-    updateLive(row.id, { prevClose: row.live.price, alertDismissed: true });
-    addLog({ action: "加碼買入", symbol: row.symbol, name: row.name, price: row.live.price, qty: addQty, market: row.market });
-  }
+
   function handleDelete(id) {
     const newHoldings = holdings.filter((h) => h.id !== id);
     setHoldings(newHoldings);
@@ -739,8 +722,7 @@ export default function App() {
           border-radius:20px; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; transform:rotate(-2deg); background:var(--surface); }
         .pw-alert-name{ font-size:14px; font-weight:700; color:var(--ink); }
         .pw-alert-sub{ font-size:12px; color:var(--muted); margin-top:2px; }
-        .pw-pill-group{ display:flex; gap:8px; }
-        .pw-pill{ display:flex; align-items:center; gap:5px; border-radius:20px; padding:7px 14px; font-size:13px;
+         .pw-pill-unused{ display:flex; align-items:center; gap:5px; border-radius:20px; padding:7px 14px; font-size:13px;
           border:1.5px dashed var(--accent); background:transparent; color:var(--accent-hi); cursor:pointer; font-weight:500; }
         .pw-pill.sell{ border-color:var(--loss); color:var(--loss); }
         .pw-pill:hover{ background:rgba(255,255,255,0.04); }
@@ -1010,14 +992,6 @@ export default function App() {
                       <div className="pw-alert-name">{row.symbol} {row.name}</div>
                       <div className="pw-alert-sub">現價 {money(row.live.price)} · 持有 {row.qty} 股 · {row.bank || UNCATEGORIZED}</div>
                     </div>
-                  </div>
-                  <div className="pw-pill-group">
-                    <button className="pw-pill sell" onClick={() => handleSell(row)}>
-                      <XCircle size={14} /> 停損賣出
-                    </button>
-                    <button className="pw-pill" onClick={() => handleBuyDip(row)}>
-                      <ShoppingCart size={14} /> 逢低買入
-                    </button>
                   </div>
                 </div>
               ))}
