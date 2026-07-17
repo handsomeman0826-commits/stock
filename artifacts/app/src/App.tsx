@@ -78,18 +78,17 @@ function simulateNextPrice(price) {
   const next = price * (1 + drift);
   return Math.max(next, 0.1);
 }
-// 從真實歷史資料切出圖表用的陣列
-function historySlice(ah: { date: string; v: number }[], days: number) {
-  return ah.slice(-days).map((h) => ({ t: h.date.slice(5).replace("-", "/"), v: h.v }));
-}
-function historySliceWeekly(ah: { date: string; v: number }[], weeks: number) {
-  // 每 7 筆取一筆，再加最後一筆
-  const pool = ah.slice(-(weeks * 7));
-  const result: { t: string; v: number }[] = [];
-  for (let i = 0; i < pool.length; i += 7) result.push({ t: pool[i].date.slice(5).replace("-", "/"), v: pool[i].v });
-  if (pool.length && result[result.length - 1]?.t !== pool[pool.length - 1].date.slice(5).replace("-", "/"))
-    result.push({ t: pool[pool.length - 1].date.slice(5).replace("-", "/"), v: pool[pool.length - 1].v });
-  return result;
+function buildDailyHistory(numPoints, endValue, stepDays, volatility) {
+  const today = new Date();
+  let v = endValue * (0.85 + Math.random() * 0.1);
+  const arr = [];
+  for (let i = numPoints - 1; i >= 0; i--) {
+    v = v * (1 + (Math.random() - 0.48) * volatility);
+    const d = new Date(today);
+    d.setDate(d.getDate() - i * stepDays);
+    arr.push({ t: dateLabel(d), v: i === 0 ? Math.round(endValue) : Math.round(v) });
+  }
+  return arr;
 }
 
 const RANGE_LABELS = [
@@ -145,7 +144,6 @@ export default function App() {
   const [heroView, setHeroView] = useState("overview");
   const [chartRange, setChartRange] = useState("day");
   const [assetMarketTab, setAssetMarketTab] = useState("TW");
-  const [assetHistory, setAssetHistory] = useState<{ date: string; v: number }[]>([]);
   const [selectedBankFilter, setSelectedBankFilter] = useState(null);
   const [confirmClearMarket, setConfirmClearMarket] = useState(false);
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
@@ -161,8 +159,7 @@ export default function App() {
   const [showTrade, setShowTrade] = useState(false);
   const [tradeRow, setTradeRow] = useState(null);
   const [tradeForm, setTradeForm] = useState({ mode: "buy", qty: "", price: "" });
-  const [showLogEdit, setShowLogEdit] = useState(false);
-  const [editingLogIdx, setEditingLogIdx] = useState<number | null>(null);
+  const [editingLogId, setEditingLogId] = useState(null);
   const [logEditForm, setLogEditForm] = useState({ qty: "", price: "" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -177,6 +174,9 @@ export default function App() {
   const [expenseForm, setExpenseForm] = useState(emptyExpenseForm);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [confirmDeleteExpenseId, setConfirmDeleteExpenseId] = useState(null);
+  const [expensePresets, setExpensePresets] = useState([]);
+  const [expenseSearch, setExpenseSearch] = useState("");
+  const [expenseCategoryFilter, setExpenseCategoryFilter] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -186,6 +186,7 @@ export default function App() {
       let api = "";
       let ex = [];
       let lg = [];
+      let presets = [];
       try {
         const r = await storageGet("holdings");
         if (r && r.value) hs = JSON.parse(r.value);
@@ -207,10 +208,9 @@ export default function App() {
         const r4 = await storageGet("log");
         if (r4 && r4.value) lg = JSON.parse(r4.value);
       } catch (e) { /* 尚無資料，預設為空 */ }
-      let ah: { date: string; v: number }[] = [];
       try {
-        const r5 = await storageGet("assetHistory");
-        if (r5 && r5.value) ah = JSON.parse(r5.value);
+        const r5 = await storageGet("expensePresets");
+        if (r5 && r5.value) presets = JSON.parse(r5.value);
       } catch (e) { /* 尚無資料，預設為空 */ }
 
       const liveInit = {};
@@ -225,20 +225,25 @@ export default function App() {
       });
       const total0 = hs.reduce((s, h) => s + (liveInit[h.id]?.price ?? h.cost) * h.qty, 0);
 
-      // 盤中走勢（day）仍用盤中 tick 即時更新，先給空陣列
-      const weekHist = historySlice(ah, 7);
-      const monthHist = historySlice(ah, 30);
-      const quarterHist = historySliceWeekly(ah, 13);
+      const dayHist = [];
+      let v = total0 * (0.95 + Math.random() * 0.03);
+      for (let i = 14; i >= 0; i--) {
+        v = v * (1 + (Math.random() - 0.48) * 0.01);
+        dayHist.push({ t: `D-${i}`, v: Math.round(i === 0 ? total0 : v) });
+      }
+      const weekHist = buildDailyHistory(7, total0, 1, 0.02);
+      const monthHist = buildDailyHistory(30, total0, 1, 0.018);
+      const quarterHist = buildDailyHistory(13, total0, 7, 0.045);
 
       setHoldings(hs);
       setLive(liveInit);
       setThreshold(th);
       setUsdRate(usd);
       setApiBaseUrl(api);
-      setHistories({ day: [], week: weekHist, month: monthHist, quarter: quarterHist });
-      setAssetHistory(ah);
+      setHistories({ day: dayHist, week: weekHist, month: monthHist, quarter: quarterHist });
       setExpenses(ex);
       setLog(lg);
+      setExpensePresets(presets);
       setLoaded(true);
     })();
   }, []);
@@ -255,8 +260,8 @@ export default function App() {
   const persistLog = useCallback(async (lg) => {
     try { await storageSet("log", JSON.stringify(lg)); } catch (e) { /* 略過儲存失敗 */ }
   }, []);
-  const persistAssetHistory = useCallback(async (ah: { date: string; v: number }[]) => {
-    try { await storageSet("assetHistory", JSON.stringify(ah)); } catch (e) { /* 略過儲存失敗 */ }
+  const persistExpensePresets = useCallback(async (p) => {
+    try { await storageSet("expensePresets", JSON.stringify(p)); } catch (e) { /* 略過儲存失敗 */ }
   }, []);
 
   useEffect(() => {
@@ -314,34 +319,6 @@ export default function App() {
   useEffect(() => {
     thresholdRef.current = threshold;
   }, [threshold]);
-
-  // 每天第一次開 App 時，記錄當天的總市值快照（台幣）
-  useEffect(() => {
-    if (!loaded) return;
-    const todayTWD = Math.round(
-      holdings.reduce((s, h) => {
-        const price = live[h.id]?.price ?? h.cost;
-        const fx = (h.market || "TW") === "US" ? usdRate : 1;
-        return s + price * h.qty * fx;
-      }, 0)
-    );
-    if (todayTWD <= 0) return;
-    const today = todayStr();
-    setAssetHistory((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].date === today) return prev; // 今天已記錄
-      const next = [...prev, { date: today, v: todayTWD }].slice(-400); // 最多保留 400 天
-      persistAssetHistory(next);
-      // 同步更新圖表
-      setHistories((h) => ({
-        ...h,
-        week: historySlice(next, 7),
-        month: historySlice(next, 30),
-        quarter: historySliceWeekly(next, 13),
-      }));
-      return next;
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
 
   useEffect(() => {
     if (!loaded || !apiBaseUrl) return;
@@ -443,19 +420,25 @@ export default function App() {
   const catPieData = Object.entries(catMap)
     .map(([k, v]) => ({ key: k, label: k, value: v }))
     .sort((a, b) => b.value - a.value);
-  const sortedExpenses = [...monthExpenses].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
+  const sortedExpenses = [...monthExpenses]
+    .filter((e) => !expenseCategoryFilter || e.category === expenseCategoryFilter)
+    .filter((e) => {
+      if (!expenseSearch.trim()) return true;
+      const q = expenseSearch.trim().toLowerCase();
+      return (e.note || "").toLowerCase().includes(q) || e.category.toLowerCase().includes(q);
+    })
+    .sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
 
   function updateLive(id, patch) {
     setLive((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }
   function addLog(entry) {
     setLog((prev) => {
-      const next = [{ time: nowLabel(), date: todayStr(), ...entry }, ...prev].slice(0, 20);
+      const next = [{ id: uid(), time: nowLabel(), date: todayStr(), ...entry }, ...prev].slice(0, 20);
       persistLog(next);
       return next;
     });
   }
-
   function handleDelete(id) {
     const newHoldings = holdings.filter((h) => h.id !== id);
     setHoldings(newHoldings);
@@ -480,7 +463,7 @@ export default function App() {
       setHoldings(newHoldings);
       persistHoldings(newHoldings);
       updateLive(tradeRow.id, { price });
-      addLog({ action: "買入", symbol: tradeRow.symbol, name: tradeRow.name, price, qty, market: tradeRow.market });
+      addLog({ action: "買入", symbol: tradeRow.symbol, name: tradeRow.name, price, qty, market: tradeRow.market, holdingId: tradeRow.id, bank: tradeRow.bank });
     } else {
       const sellQty = Math.min(qty, tradeRow.qty);
       const gain = (price - tradeRow.cost) * sellQty;
@@ -496,55 +479,72 @@ export default function App() {
         persistHoldings(newHoldings);
         updateLive(tradeRow.id, { price });
       }
-      addLog({ action: "賣出", symbol: tradeRow.symbol, name: tradeRow.name, price, qty: sellQty, market: tradeRow.market, gain });
+      addLog({ action: "賣出", symbol: tradeRow.symbol, name: tradeRow.name, price, qty: sellQty, market: tradeRow.market, gain, holdingId: tradeRow.id, bank: tradeRow.bank });
     }
     setShowTrade(false);
     setTradeRow(null);
   }
-  // ---- 操作紀錄：刪除 / 編輯 ----
-  function deleteLogEntry(idx: number) {
-    setLog((prev) => {
-      const next = prev.filter((_, i) => i !== idx);
-      persistLog(next);
-      return next;
-    });
-  }
-  function openLogEdit(idx: number) {
-    const l = log[idx];
-    setEditingLogIdx(idx);
-    setLogEditForm({ qty: String(l.qty ?? ""), price: String(l.price ?? "") });
-    setShowLogEdit(true);
+  function openEditLog(entry) {
+    if (entry.action !== "買入" && entry.action !== "賣出") return;
+    setEditingLogId(entry.id);
+    setLogEditForm({ qty: String(entry.qty), price: String(entry.price) });
   }
   function submitLogEdit() {
-    if (editingLogIdx === null) return;
-    const l = log[editingLogIdx];
+    const entry = log.find((l) => l.id === editingLogId);
+    if (!entry) return;
     const newQty = parseFloat(logEditForm.qty);
     const newPrice = parseFloat(logEditForm.price);
-    if (isNaN(newQty) || newQty <= 0 || isNaN(newPrice) || newPrice <= 0) return;
+    if (!newQty || newQty <= 0 || !newPrice || newPrice <= 0) return;
 
-    // 更新 log
-    setLog((prev) => {
-      const next = prev.map((entry, i) =>
-        i === editingLogIdx ? { ...entry, qty: newQty, price: newPrice } : entry
-      );
-      persistLog(next);
-      return next;
-    });
+    const holding = entry.holdingId ? holdings.find((h) => h.id === entry.holdingId) : null;
+    let updatedGain = entry.gain;
 
-    // 同步回持股：找到同 symbol + market 的持股，更新 qty 和 cost
-    const updated = holdings.map((h) => {
-      if (h.symbol === l.symbol && (h.market || "TW") === (l.market || "TW")) {
-        return { ...h, qty: newQty, cost: newPrice };
+    if (holding) {
+      if (entry.action === "買入") {
+        // 先把「原本這筆買入」的影響從目前持股扣掉，回推出這筆交易發生前的股數與成本
+        const totalCostAfter = holding.cost * holding.qty;
+        const totalQtyAfter = holding.qty;
+        const totalCostBefore = totalCostAfter - entry.price * entry.qty;
+        const totalQtyBefore = totalQtyAfter - entry.qty;
+        // 再套用修改後的新數字
+        const totalQtyNew = totalQtyBefore + newQty;
+        const totalCostNew = totalCostBefore + newPrice * newQty;
+        const newCostBasis = totalQtyNew > 0 ? totalCostNew / totalQtyNew : 0;
+        if (totalQtyNew <= 0) {
+          const newHoldings = holdings.filter((h) => h.id !== holding.id);
+          setHoldings(newHoldings);
+          persistHoldings(newHoldings);
+        } else {
+          const newHoldings = holdings.map((h) =>
+            h.id === holding.id ? { ...h, qty: totalQtyNew, cost: newCostBasis } : h
+          );
+          setHoldings(newHoldings);
+          persistHoldings(newHoldings);
+        }
+      } else {
+        // 賣出不影響成本價，先把原本賣出的股數加回來，再扣掉修改後的股數
+        const qtyAfterReverse = holding.qty + entry.qty;
+        const qtyFinal = qtyAfterReverse - newQty;
+        if (qtyFinal <= 0) {
+          const newHoldings = holdings.filter((h) => h.id !== holding.id);
+          setHoldings(newHoldings);
+          persistHoldings(newHoldings);
+        } else {
+          const newHoldings = holdings.map((h) =>
+            h.id === holding.id ? { ...h, qty: qtyFinal } : h
+          );
+          setHoldings(newHoldings);
+          persistHoldings(newHoldings);
+        }
+        updatedGain = (newPrice - holding.cost) * newQty;
       }
-      return h;
-    });
-    setHoldings(updated);
-    persistHoldings(updated);
+    }
 
-    setShowLogEdit(false);
-    setEditingLogIdx(null);
+    const newLog = log.map((l) => (l.id === editingLogId ? { ...l, qty: newQty, price: newPrice, gain: updatedGain } : l));
+    setLog(newLog);
+    persistLog(newLog);
+    setEditingLogId(null);
   }
-
   function clearMarketHoldings(market) {
     const newHoldings = holdings.filter((h) => (h.market || "TW") !== market);
     setHoldings(newHoldings);
@@ -661,6 +661,24 @@ export default function App() {
     persistExpenses(newExpenses);
     setConfirmDeleteExpenseId(null);
   }
+  function usePreset(preset) {
+    setEditingExpenseId(null);
+    setExpenseForm({ date: todayStr(), category: preset.category, amount: String(preset.amount), note: preset.note || "" });
+    setShowAddExpense(true);
+  }
+  function saveCurrentAsPreset() {
+    const amount = parseFloat(expenseForm.amount);
+    if (!amount || amount <= 0) return;
+    const label = `${expenseForm.category} $${amount}`;
+    const newPresets = [...expensePresets, { id: uid(), label, category: expenseForm.category, amount, note: expenseForm.note.trim() }].slice(-10);
+    setExpensePresets(newPresets);
+    persistExpensePresets(newPresets);
+  }
+  function deletePreset(id) {
+    const newPresets = expensePresets.filter((p) => p.id !== id);
+    setExpensePresets(newPresets);
+    persistExpensePresets(newPresets);
+  }
 
   return (
     <div className="pw-app">
@@ -722,7 +740,8 @@ export default function App() {
           border-radius:20px; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; transform:rotate(-2deg); background:var(--surface); }
         .pw-alert-name{ font-size:14px; font-weight:700; color:var(--ink); }
         .pw-alert-sub{ font-size:12px; color:var(--muted); margin-top:2px; }
-         .pw-pill-unused{ display:flex; align-items:center; gap:5px; border-radius:20px; padding:7px 14px; font-size:13px;
+        .pw-pill-group{ display:flex; gap:8px; }
+        .pw-pill{ display:flex; align-items:center; gap:5px; border-radius:20px; padding:7px 14px; font-size:13px;
           border:1.5px dashed var(--accent); background:transparent; color:var(--accent-hi); cursor:pointer; font-weight:500; }
         .pw-pill.sell{ border-color:var(--loss); color:var(--loss); }
         .pw-pill:hover{ background:rgba(255,255,255,0.04); }
@@ -751,8 +770,9 @@ export default function App() {
         .pw-confirm-del:hover{ color:var(--gain); opacity:0.8; }
         .pw-log{ background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px 20px; }
         .pw-log-item{ display:flex; justify-content:space-between; font-size:12.5px; padding:6px 0;
-          border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; color:var(--ink); }
+          border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; color:var(--ink); gap:10px; flex-wrap:wrap; }
         .pw-log-item:last-child{ border-bottom:none; }
+        .pw-log-right{ display:flex; align-items:center; gap:8px; flex:none; }
         .pw-log-empty{ color:var(--muted); font-size:12.5px; }
         .pw-bank-cards{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:22px; }
         .pw-bank-card{ background:var(--surface); border:1px solid var(--line); border-radius:14px;
@@ -777,6 +797,26 @@ export default function App() {
         .pw-pie-legend-item .pw-lname{ display:flex; align-items:center; color:var(--ink); }
         .pw-pie-legend-item .pw-lpct{ color:var(--muted); font-family:'IBM Plex Mono',monospace; }
         .pw-cat-chip{ display:inline-flex; align-items:center; gap:6px; font-size:11.5px; border-radius:6px; padding:2px 8px; }
+        .pw-preset-row{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:16px; }
+        .pw-preset-label{ font-size:12px; color:var(--muted); margin-right:2px; }
+        .pw-preset-chip{ display:inline-flex; align-items:center; border:1px solid var(--line); background:var(--surface2);
+          border-radius:20px; overflow:hidden; }
+        .pw-preset-chip button:first-child{ background:none; border:none; color:var(--ink); font-size:12px;
+          padding:6px 4px 6px 12px; cursor:pointer; font-family:'Noto Sans TC',sans-serif; }
+        .pw-preset-chip:hover{ border-color:var(--accent); }
+        .pw-preset-remove{ background:none; border:none; color:var(--muted); cursor:pointer; padding:6px 10px 6px 4px;
+          display:flex; align-items:center; }
+        .pw-preset-remove:hover{ color:var(--loss); }
+        .pw-expense-filters{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:0; }
+        .pw-expense-list{ display:flex; flex-direction:column; gap:8px; margin-top:14px; margin-bottom:22px; }
+        .pw-expense-card{ background:var(--surface); border:1px solid var(--line); border-radius:12px;
+          padding:12px 14px; display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+        .pw-expense-main{ min-width:0; flex:1; }
+        .pw-expense-top{ display:flex; align-items:center; gap:8px; margin-bottom:5px; flex-wrap:wrap; }
+        .pw-expense-date{ font-size:11.5px; color:var(--muted); font-family:'IBM Plex Mono',monospace; }
+        .pw-expense-note{ font-size:13px; color:var(--ink); word-break:break-word; }
+        .pw-expense-right{ text-align:right; flex:none; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+        .pw-expense-amount{ font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; color:var(--ink); }
         .pw-month-picker{ display:flex; align-items:center; gap:14px; margin-bottom:16px; flex-wrap:wrap; }
         .pw-year-switch{ display:flex; align-items:center; gap:10px; font-family:'IBM Plex Mono',monospace;
           font-size:13.5px; color:var(--ink); font-weight:600; flex:none; }
@@ -1076,17 +1116,20 @@ export default function App() {
               <p className="pw-log-empty">目前尚無操作紀錄。</p>
             ) : (
               log.map((l, i) => (
-                <div className="pw-log-item" key={i}>
-                  <span>{l.date} {l.time} · {l.action} {l.symbol} {l.name}{l.qty ? `（${l.qty}股）` : ""} @{l.price?.toFixed(2)}</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div className="pw-log-item" key={l.id || i}>
+                  <span>{l.date} {l.time} · {l.action} {l.symbol} {l.name}{l.qty ? `（${l.qty}股）` : ""} @{l.price.toFixed(2)}</span>
+                  <span className="pw-log-right">
                     {typeof l.gain === "number" ? (
                       <span style={{ color: l.gain >= 0 ? "var(--gain)" : "var(--loss)" }}>{moneyFor(l.gain, l.market)}（損益）</span>
                     ) : (
                       <span className="pw-log-empty">—</span>
                     )}
-                    <button className="pw-row-icon" onClick={() => openLogEdit(i)} aria-label="編輯紀錄"><Pencil size={13} /></button>
-                    <button className="pw-row-icon" onClick={() => deleteLogEntry(i)} aria-label="刪除紀錄"><Trash2 size={13} /></button>
-                  </div>
+                    {(l.action === "買入" || l.action === "賣出") && (
+                      <button className="pw-row-icon" onClick={() => openEditLog(l)} aria-label="編輯">
+                        <Pencil size={13} />
+                      </button>
+                    )}
+                  </span>
                 </div>
               ))
             )}
@@ -1234,31 +1277,40 @@ export default function App() {
             </div>
           )}
 
-          {showLogEdit && editingLogIdx !== null && (
-            <div className="pw-overlay" onClick={() => setShowLogEdit(false)}>
-              <div className="pw-modal" onClick={(e) => e.stopPropagation()}>
-                <h3>編輯操作紀錄
-                  <button className="pw-row-icon" onClick={() => setShowLogEdit(false)} aria-label="關閉"><X size={18} /></button>
-                </h3>
-                <p className="pw-hint" style={{ marginTop: 0 }}>
-                  {log[editingLogIdx]?.action} · {log[editingLogIdx]?.symbol} {log[editingLogIdx]?.name}<br />
-                  儲存後會同步更新對應持股的股數與成本價。
-                </p>
-                <div className="pw-field">
-                  <label>股數</label>
-                  <input type="number" value={logEditForm.qty} onChange={(e) => setLogEditForm({ ...logEditForm, qty: e.target.value })} placeholder="例如 1000" />
-                </div>
-                <div className="pw-field">
-                  <label>成本價（每股）</label>
-                  <input type="number" step="0.01" value={logEditForm.price} onChange={(e) => setLogEditForm({ ...logEditForm, price: e.target.value })} placeholder="例如 65.30" />
-                </div>
-                <div className="pw-modal-actions">
-                  <button className="pw-btn-secondary" onClick={() => setShowLogEdit(false)}>取消</button>
-                  <button className="pw-btn-primary" onClick={submitLogEdit}>儲存並同步</button>
+          {editingLogId && (() => {
+            const entry = log.find((l) => l.id === editingLogId);
+            if (!entry) return null;
+            const holdingExists = entry.holdingId && holdings.some((h) => h.id === entry.holdingId);
+            return (
+              <div className="pw-overlay" onClick={() => setEditingLogId(null)}>
+                <div className="pw-modal" onClick={(e) => e.stopPropagation()}>
+                  <h3>編輯{entry.action}紀錄
+                    <button className="pw-row-icon" onClick={() => setEditingLogId(null)} aria-label="關閉"><X size={18} /></button>
+                  </h3>
+                  <p className="pw-hint" style={{ marginTop: 0 }}>
+                    {entry.date} · {entry.symbol} {entry.name}
+                  </p>
+                  <div className="pw-field">
+                    <label>股數</label>
+                    <input type="number" value={logEditForm.qty} onChange={(e) => setLogEditForm({ ...logEditForm, qty: e.target.value })} />
+                  </div>
+                  <div className="pw-field">
+                    <label>價格（每股）</label>
+                    <input type="number" value={logEditForm.price} onChange={(e) => setLogEditForm({ ...logEditForm, price: e.target.value })} />
+                  </div>
+                  <p className="pw-hint">
+                    {holdingExists
+                      ? "修改後會自動回推調整目前持股的股數與成本價，讓數字維持一致。"
+                      : "這檔持股目前已經不存在（可能已全部賣出或被刪除），所以這次修改只會更新這筆紀錄本身顯示的數字，不會影響任何持股。"}
+                  </p>
+                  <div className="pw-modal-actions">
+                    <button className="pw-btn-secondary" onClick={() => setEditingLogId(null)}>取消</button>
+                    <button className="pw-btn-primary" onClick={submitLogEdit}>儲存變更</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {showSettings && (
             <div className="pw-overlay" onClick={() => setShowSettings(false)}>
@@ -1314,6 +1366,20 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {expensePresets.length > 0 && (
+            <div className="pw-preset-row">
+              <span className="pw-preset-label">常用</span>
+              {expensePresets.map((p) => (
+                <span className="pw-preset-chip" key={p.id}>
+                  <button onClick={() => usePreset(p)}>{p.label}</button>
+                  <button className="pw-preset-remove" onClick={() => deletePreset(p.id)} aria-label="移除常用">
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           <div className="pw-month-picker">
             <div className="pw-year-switch">
@@ -1381,46 +1447,70 @@ export default function App() {
           </div>
 
           <p className="pw-section-title">消費明細（{selectedYear}年{selectedMonthNum}月）</p>
-          <div className="pw-table-wrap">
-            {sortedExpenses.length === 0 ? (
-              <div className="pw-empty">{selectedYear}年{selectedMonthNum}月尚無消費紀錄，點右上角「新增消費」開始記帳。</div>
-            ) : (
-              <table className="pw-table">
-                <thead>
-                  <tr><th>日期</th><th>類別</th><th>備註</th><th>金額</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {sortedExpenses.map((e) => (
-                    <tr key={e.id}>
-                      <td>{e.date}</td>
-                      <td><span className="pw-bank-tag">{e.category}</span></td>
-                      <td style={{ fontFamily: "'Noto Sans TC',sans-serif", color: "var(--muted)" }}>{e.note || "—"}</td>
-                      <td>{money(e.amount)}</td>
-                      <td>
-                        <div className="pw-row-actions">
-                          {confirmDeleteExpenseId === e.id ? (
-                            <>
-                              <button className="pw-row-icon pw-confirm-del" onClick={() => deleteExpense(e.id)}>確定刪除</button>
-                              <button className="pw-row-icon" onClick={() => setConfirmDeleteExpenseId(null)}>取消</button>
-                            </>
-                          ) : (
-                            <>
-                              <button className="pw-row-icon" onClick={() => openEditExpense(e)} aria-label="編輯">
-                                <Pencil size={14} />
-                              </button>
-                              <button className="pw-row-icon" onClick={() => setConfirmDeleteExpenseId(e.id)} aria-label="刪除">
-                                <Trash2 size={15} />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+          <div className="pw-expense-filters">
+            <div className="pw-field pw-search-wrap" style={{ marginBottom: 0, flex: 1, minWidth: 180 }}>
+              <input
+                value={expenseSearch}
+                onChange={(e) => setExpenseSearch(e.target.value)}
+                placeholder="搜尋備註或類別"
+              />
+              <Search size={15} className="pw-search-icon" />
+            </div>
+            {expenseCategoryFilter && (
+              <button className="pw-row-icon" onClick={() => setExpenseCategoryFilter(null)}>
+                清除類別篩選（{expenseCategoryFilter}）
+              </button>
             )}
           </div>
+          <div className="pw-chips" style={{ marginTop: 10 }}>
+            {EXPENSE_CATEGORIES.map((c) => (
+              <button key={c} className={"pw-chip" + (expenseCategoryFilter === c ? " active" : "")}
+                onClick={() => setExpenseCategoryFilter(expenseCategoryFilter === c ? null : c)}>{c}</button>
+            ))}
+          </div>
+
+          {sortedExpenses.length === 0 ? (
+            <div className="pw-empty">
+              {expenseSearch.trim() || expenseCategoryFilter
+                ? "沒有符合搜尋／篩選條件的消費紀錄。"
+                : `${selectedYear}年${selectedMonthNum}月尚無消費紀錄，點右上角「新增消費」開始記帳。`}
+            </div>
+          ) : (
+            <div className="pw-expense-list">
+              {sortedExpenses.map((e) => (
+                <div className="pw-expense-card" key={e.id}>
+                  <div className="pw-expense-main">
+                    <div className="pw-expense-top">
+                      <span className="pw-bank-tag">{e.category}</span>
+                      <span className="pw-expense-date">{e.date}</span>
+                    </div>
+                    <div className="pw-expense-note">{e.note || "—"}</div>
+                  </div>
+                  <div className="pw-expense-right">
+                    <div className="pw-expense-amount">{money(e.amount)}</div>
+                    <div className="pw-row-actions">
+                      {confirmDeleteExpenseId === e.id ? (
+                        <>
+                          <button className="pw-row-icon pw-confirm-del" onClick={() => deleteExpense(e.id)}>確定刪除</button>
+                          <button className="pw-row-icon" onClick={() => setConfirmDeleteExpenseId(null)}>取消</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="pw-row-icon" onClick={() => openEditExpense(e)} aria-label="編輯">
+                            <Pencil size={14} />
+                          </button>
+                          <button className="pw-row-icon" onClick={() => setConfirmDeleteExpenseId(e.id)} aria-label="刪除">
+                            <Trash2 size={15} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {showAddExpense && (
             <div className="pw-overlay" onClick={() => { setShowAddExpense(false); setEditingExpenseId(null); }}>
@@ -1454,6 +1544,11 @@ export default function App() {
                   <button className="pw-btn-secondary" onClick={() => { setShowAddExpense(false); setEditingExpenseId(null); }}>取消</button>
                   <button className="pw-btn-primary" onClick={submitExpense}>{editingExpenseId ? "儲存變更" : "新增"}</button>
                 </div>
+                {!editingExpenseId && (
+                  <button className="pw-row-icon" style={{ marginTop: 10, width: "100%", justifyContent: "center" }} onClick={saveCurrentAsPreset}>
+                    <Plus size={13} /> 把目前的類別／金額／備註存成常用項目
+                  </button>
+                )}
               </div>
             </div>
           )}
