@@ -1414,8 +1414,8 @@ export default function App() {
 
           <div className="pw-card pw-overview-card">
             <div className="pw-view-tabs">
-              <button className={expenseView === "overview" ? "active" : ""} onClick={() => setExpenseView("overview")}>當月總覽</button>
               <button className={expenseView === "yearly" ? "active" : ""} onClick={() => setExpenseView("yearly")}>年度總結</button>
+              <button className={expenseView === "overview" ? "active" : ""} onClick={() => setExpenseView("overview")}>當月總覽</button>
               <button className={expenseView === "category" ? "active" : ""} onClick={() => setExpenseView("category")}>類別佔比</button>
             </div>
 
