@@ -161,6 +161,9 @@ export default function App() {
   const [showTrade, setShowTrade] = useState(false);
   const [tradeRow, setTradeRow] = useState(null);
   const [tradeForm, setTradeForm] = useState({ mode: "buy", qty: "", price: "" });
+  const [showLogEdit, setShowLogEdit] = useState(false);
+  const [editingLogIdx, setEditingLogIdx] = useState<number | null>(null);
+  const [logEditForm, setLogEditForm] = useState({ qty: "", price: "" });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const tickRef = useRef(null);
@@ -515,6 +518,50 @@ export default function App() {
     setShowTrade(false);
     setTradeRow(null);
   }
+  // ---- 操作紀錄：刪除 / 編輯 ----
+  function deleteLogEntry(idx: number) {
+    setLog((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      persistLog(next);
+      return next;
+    });
+  }
+  function openLogEdit(idx: number) {
+    const l = log[idx];
+    setEditingLogIdx(idx);
+    setLogEditForm({ qty: String(l.qty ?? ""), price: String(l.price ?? "") });
+    setShowLogEdit(true);
+  }
+  function submitLogEdit() {
+    if (editingLogIdx === null) return;
+    const l = log[editingLogIdx];
+    const newQty = parseFloat(logEditForm.qty);
+    const newPrice = parseFloat(logEditForm.price);
+    if (isNaN(newQty) || newQty <= 0 || isNaN(newPrice) || newPrice <= 0) return;
+
+    // 更新 log
+    setLog((prev) => {
+      const next = prev.map((entry, i) =>
+        i === editingLogIdx ? { ...entry, qty: newQty, price: newPrice } : entry
+      );
+      persistLog(next);
+      return next;
+    });
+
+    // 同步回持股：找到同 symbol + market 的持股，更新 qty 和 cost
+    const updated = holdings.map((h) => {
+      if (h.symbol === l.symbol && (h.market || "TW") === (l.market || "TW")) {
+        return { ...h, qty: newQty, cost: newPrice };
+      }
+      return h;
+    });
+    setHoldings(updated);
+    persistHoldings(updated);
+
+    setShowLogEdit(false);
+    setEditingLogIdx(null);
+  }
+
   function clearMarketHoldings(market) {
     const newHoldings = holdings.filter((h) => (h.market || "TW") !== market);
     setHoldings(newHoldings);
@@ -1056,12 +1103,16 @@ export default function App() {
             ) : (
               log.map((l, i) => (
                 <div className="pw-log-item" key={i}>
-                  <span>{l.date} {l.time} · {l.action} {l.symbol} {l.name}{l.qty ? `（${l.qty}股）` : ""} @{l.price.toFixed(2)}</span>
-                  {typeof l.gain === "number" ? (
-                    <span style={{ color: l.gain >= 0 ? "var(--gain)" : "var(--loss)" }}>{moneyFor(l.gain, l.market)}（損益）</span>
-                  ) : (
-                    <span className="pw-log-empty">—</span>
-                  )}
+                  <span>{l.date} {l.time} · {l.action} {l.symbol} {l.name}{l.qty ? `（${l.qty}股）` : ""} @{l.price?.toFixed(2)}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {typeof l.gain === "number" ? (
+                      <span style={{ color: l.gain >= 0 ? "var(--gain)" : "var(--loss)" }}>{moneyFor(l.gain, l.market)}（損益）</span>
+                    ) : (
+                      <span className="pw-log-empty">—</span>
+                    )}
+                    <button className="pw-row-icon" onClick={() => openLogEdit(i)} aria-label="編輯紀錄"><Pencil size={13} /></button>
+                    <button className="pw-row-icon" onClick={() => deleteLogEntry(i)} aria-label="刪除紀錄"><Trash2 size={13} /></button>
+                  </div>
                 </div>
               ))
             )}
@@ -1204,6 +1255,32 @@ export default function App() {
                 <div className="pw-modal-actions">
                   <button className="pw-btn-secondary" onClick={() => setShowTrade(false)}>取消</button>
                   <button className="pw-btn-primary" onClick={submitTrade}>確認{tradeForm.mode === "buy" ? "買入" : "賣出"}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showLogEdit && editingLogIdx !== null && (
+            <div className="pw-overlay" onClick={() => setShowLogEdit(false)}>
+              <div className="pw-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>編輯操作紀錄
+                  <button className="pw-row-icon" onClick={() => setShowLogEdit(false)} aria-label="關閉"><X size={18} /></button>
+                </h3>
+                <p className="pw-hint" style={{ marginTop: 0 }}>
+                  {log[editingLogIdx]?.action} · {log[editingLogIdx]?.symbol} {log[editingLogIdx]?.name}<br />
+                  儲存後會同步更新對應持股的股數與成本價。
+                </p>
+                <div className="pw-field">
+                  <label>股數</label>
+                  <input type="number" value={logEditForm.qty} onChange={(e) => setLogEditForm({ ...logEditForm, qty: e.target.value })} placeholder="例如 1000" />
+                </div>
+                <div className="pw-field">
+                  <label>成本價（每股）</label>
+                  <input type="number" step="0.01" value={logEditForm.price} onChange={(e) => setLogEditForm({ ...logEditForm, price: e.target.value })} placeholder="例如 65.30" />
+                </div>
+                <div className="pw-modal-actions">
+                  <button className="pw-btn-secondary" onClick={() => setShowLogEdit(false)}>取消</button>
+                  <button className="pw-btn-primary" onClick={submitLogEdit}>儲存並同步</button>
                 </div>
               </div>
             </div>
