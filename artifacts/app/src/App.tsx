@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell,
+  PieChart, Pie, Cell, BarChart, Bar,
 } from "recharts";
 import {
   Settings, Plus, X, Trash2, TrendingUp, TrendingDown, AlertTriangle,
@@ -166,7 +166,7 @@ export default function App() {
   const tickRef = useRef(null);
 
   const [expenses, setExpenses] = useState([]);
-  const [expenseView, setExpenseView] = useState("overview"); // "overview" | "category"
+  const [expenseView, setExpenseView] = useState("overview"); // "overview" | "category" | "yearly"
   const now0 = new Date();
   const [selectedYear, setSelectedYear] = useState(now0.getFullYear());
   const [selectedMonthNum, setSelectedMonthNum] = useState(now0.getMonth() + 1);
@@ -428,6 +428,23 @@ export default function App() {
       return (e.note || "").toLowerCase().includes(q) || e.category.toLowerCase().includes(q);
     })
     .sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
+
+  // ---- 年度總結計算 ----
+  const yearPrefix = String(selectedYear);
+  const yearExpenses = expenses.filter((e) => e.date && e.date.startsWith(yearPrefix));
+  const yearTotal = yearExpenses.reduce((s, e) => s + e.amount, 0);
+  const monthlyBarData = Array.from({ length: 12 }, (_, i) => {
+    const m = i + 1;
+    const key = yearPrefix + "-" + String(m).padStart(2, "0");
+    const total = expenses.filter((e) => e.date && e.date.startsWith(key)).reduce((s, e) => s + e.amount, 0);
+    return { month: `${m}月`, total };
+  });
+  const monthsWithSpending = monthlyBarData.filter((m) => m.total > 0).length;
+  const yearMonthlyAvg = monthsWithSpending > 0 ? yearTotal / monthsWithSpending : 0;
+  const highestMonth = monthlyBarData.reduce((max, m) => (m.total > max.total ? m : max), monthlyBarData[0]);
+  const yearCatMap = {};
+  yearExpenses.forEach((e) => { yearCatMap[e.category] = (yearCatMap[e.category] || 0) + e.amount; });
+  const yearTopCategory = Object.entries(yearCatMap).sort((a, b) => b[1] - a[1])[0];
 
   function updateLive(id, patch) {
     setLive((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -1398,6 +1415,7 @@ export default function App() {
           <div className="pw-card pw-overview-card">
             <div className="pw-view-tabs">
               <button className={expenseView === "overview" ? "active" : ""} onClick={() => setExpenseView("overview")}>當月總覽</button>
+              <button className={expenseView === "yearly" ? "active" : ""} onClick={() => setExpenseView("yearly")}>年度總結</button>
               <button className={expenseView === "category" ? "active" : ""} onClick={() => setExpenseView("category")}>類別佔比</button>
             </div>
 
@@ -1409,6 +1427,37 @@ export default function App() {
                   <div className="pw-mini-row">當月筆數<b>{monthExpenses.length}</b></div>
                   <div className="pw-mini-row">累計總支出<b>{money(allExpenseTotal)}</b></div>
                   <div className="pw-mini-row">總筆數<b>{expenses.length}</b></div>
+                </div>
+              </div>
+            )}
+
+            {expenseView === "yearly" && (
+              <div>
+                <p className="pw-value-label">{selectedYear}年全年支出</p>
+                <p className="pw-value-big pw-loss">{money(yearTotal)}</p>
+                <div className="pw-mini-row-wrap">
+                  <div className="pw-mini-row">全年筆數<b>{yearExpenses.length}</b></div>
+                  <div className="pw-mini-row">月均支出<b>{money(yearMonthlyAvg)}</b></div>
+                  <div className="pw-mini-row">
+                    最高消費月<b>{highestMonth.total > 0 ? `${highestMonth.month} ${money(highestMonth.total)}` : "—"}</b>
+                  </div>
+                  {yearTopCategory && (
+                    <div className="pw-mini-row">最大類別<b>{yearTopCategory[0]} {money(yearTopCategory[1])}</b></div>
+                  )}
+                </div>
+                <div style={{ width: "100%", height: 200, marginTop: 18 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={monthlyBarData} margin={{ top: 6, right: 10, left: -10, bottom: 0 }}>
+                      <CartesianGrid stroke="#332C22" vertical={false} />
+                      <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={{ stroke: "#332C22" }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={false} tickLine={false} width={54}
+                        tickFormatter={(v) => (v / 1000).toFixed(0) + "k"} />
+                      <Tooltip formatter={(v) => money(v)}
+                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #332C22", background: "#1E1B17", color: "#F1EAE0" }}
+                        itemStyle={{ color: "#F1EAE0" }} cursor={{ fill: "rgba(193,103,30,0.08)" }} />
+                      <Bar dataKey="total" fill="#E38A38" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             )}
