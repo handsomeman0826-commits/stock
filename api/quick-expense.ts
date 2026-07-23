@@ -1,9 +1,14 @@
 import { Redis } from "@upstash/redis";
 
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
+const url =
+  process.env.KV_REST_API_URL ||
+  process.env.UPSTASH_REDIS_REST_URL ||
+  "";
+const token =
+  process.env.KV_REST_API_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  "";
+const redis = url && token ? new Redis({ url, token, automaticDeserialization: false }) : null;
 
 // 伺服器預設用 UTC 時間，這裡固定換算成台北時間（UTC+8）算出「今天」的日期，
 // 讓捷徑記的日期跟 App 前端顯示的日期邏輯一致。
@@ -31,6 +36,7 @@ function uid() {
 //   避免網址被別人猜到就能亂寫資料
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
+  if (!redis) return res.status(500).json({ success: false, message: "Redis 未設定" });
   try {
     const secret = (req.query.key || "").toString();
     if (process.env.QUICK_EXPENSE_SECRET && secret !== process.env.QUICK_EXPENSE_SECRET) {
