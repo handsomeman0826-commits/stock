@@ -413,8 +413,12 @@ export default function App() {
     .sort((a, b) => b.value - a.value);
   const uniqueBanks = [...new Set(holdings.map((h) => h.bank).filter(Boolean))];
 
-  const pieData = rows
-    .filter((r) => r.valueTWD > 0)
+  const twPieData = rows
+    .filter((r) => (r.market || "TW") === "TW" && r.valueTWD > 0)
+    .map((r) => ({ key: r.id, label: `${r.symbol} ${r.name}`, value: r.valueTWD }))
+    .sort((a, b) => b.value - a.value);
+  const usPieData = rows
+    .filter((r) => r.market === "US" && r.valueTWD > 0)
     .map((r) => ({ key: r.id, label: `${r.symbol} ${r.name}`, value: r.valueTWD }))
     .sort((a, b) => b.value - a.value);
 
@@ -1002,33 +1006,74 @@ export default function App() {
             )}
 
             {heroView === "allocation" && (
-              <div className="pw-pie-wrap">
-                <div style={{ width: "100%", height: 220 }}>
-                  <ResponsiveContainer>
-                    <PieChart>
-                      <Pie data={pieData} dataKey="value" nameKey="label" cx="50%" cy="50%"
-                        innerRadius={54} outerRadius={90} paddingAngle={2} stroke="none">
-                        {pieData.map((_, i) => (
-                          <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(v) => money(v)}
-                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #332C22", background: "#1E1B17", color: "#F1EAE0" }}
-                        itemStyle={{ color: "#F1EAE0" }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="pw-pie-legend">
-                  {pieData.map((d, i) => (
-                    <div className="pw-pie-legend-item" key={d.key}>
-                      <span className="pw-lname">
-                        <span className="pw-swatch" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}></span>
-                        {d.label}
-                      </span>
-                      <span className="pw-lpct">{totalValue > 0 ? ((d.value / totalValue) * 100).toFixed(1) : "0.0"}%</span>
+              <div>
+                <p className="pw-value-label" style={{ marginBottom: 10 }}>台股佔比（{money(twTotalValue)}）</p>
+                {twPieData.length === 0 ? (
+                  <div className="pw-empty" style={{ padding: 16, marginBottom: 20 }}>尚無台股倉位。</div>
+                ) : (
+                  <div className="pw-pie-wrap" style={{ marginBottom: 24 }}>
+                    <div style={{ width: "100%", height: 200 }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie data={twPieData} dataKey="value" nameKey="label" cx="50%" cy="50%"
+                            innerRadius={50} outerRadius={82} paddingAngle={2} stroke="none">
+                            {twPieData.map((_, i) => (
+                              <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(v) => money(v)}
+                            contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #332C22", background: "#1E1B17", color: "#F1EAE0" }}
+                            itemStyle={{ color: "#F1EAE0" }} />
+                        </PieChart>
+                      </ResponsiveContainer>
                     </div>
-                  ))}
-                </div>
+                    <div className="pw-pie-legend">
+                      {twPieData.map((d, i) => (
+                        <div className="pw-pie-legend-item" key={d.key}>
+                          <span className="pw-lname">
+                            <span className="pw-swatch" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}></span>
+                            {d.label}
+                          </span>
+                          <span className="pw-lpct">{twTotalValue > 0 ? ((d.value / twTotalValue) * 100).toFixed(1) : "0.0"}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="pw-value-label" style={{ marginBottom: 10 }}>美股佔比（{money(usTotalValue)}）</p>
+                {usPieData.length === 0 ? (
+                  <div className="pw-empty" style={{ padding: 16 }}>尚無美股倉位。</div>
+                ) : (
+                  <div className="pw-pie-wrap">
+                    <div style={{ width: "100%", height: 200 }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie data={usPieData} dataKey="value" nameKey="label" cx="50%" cy="50%"
+                            innerRadius={50} outerRadius={82} paddingAngle={2} stroke="none">
+                            {usPieData.map((_, i) => (
+                              <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(v) => money(v)}
+                            contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #332C22", background: "#1E1B17", color: "#F1EAE0" }}
+                            itemStyle={{ color: "#F1EAE0" }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="pw-pie-legend">
+                      {usPieData.map((d, i) => (
+                        <div className="pw-pie-legend-item" key={d.key}>
+                          <span className="pw-lname">
+                            <span className="pw-swatch" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}></span>
+                            {d.label}
+                          </span>
+                          <span className="pw-lpct">{usTotalValue > 0 ? ((d.value / usTotalValue) * 100).toFixed(1) : "0.0"}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
