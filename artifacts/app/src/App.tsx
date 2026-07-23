@@ -60,8 +60,9 @@ function nowLabel() {
   const d = new Date();
   return d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0") + ":" + d.getSeconds().toString().padStart(2, "0");
 }
-function dateLabel(d) {
-  return (d.getMonth() + 1) + "/" + d.getDate();
+function dateStrToLabel(dateStr) {
+  const parts = dateStr.split("-");
+  return parseInt(parts[1], 10) + "/" + parseInt(parts[2], 10);
 }
 function todayStr() {
   const d = new Date();
@@ -78,18 +79,6 @@ function simulateNextPrice(price) {
   const next = price * (1 + drift);
   return Math.max(next, 0.1);
 }
-function buildDailyHistory(numPoints, endValue, stepDays, volatility) {
-  const today = new Date();
-  let v = endValue * (0.85 + Math.random() * 0.1);
-  const arr = [];
-  for (let i = numPoints - 1; i >= 0; i--) {
-    v = v * (1 + (Math.random() - 0.48) * volatility);
-    const d = new Date(today);
-    d.setDate(d.getDate() - i * stepDays);
-    arr.push({ t: dateLabel(d), v: i === 0 ? Math.round(endValue) : Math.round(v) });
-  }
-  return arr;
-}
 
 const RANGE_LABELS = [
   { key: "day", label: "每日" },
@@ -97,6 +86,7 @@ const RANGE_LABELS = [
   { key: "month", label: "每月" },
   { key: "quarter", label: "每季" },
 ];
+const RANGE_DAYS = { week: 7, month: 30, quarter: 90 };
 const VIEW_LABELS = [
   { key: "overview", label: "總資產市值" },
   { key: "trend", label: "資產走勢" },
@@ -140,7 +130,9 @@ export default function App() {
 
   const [holdings, setHoldings] = useState([]);
   const [live, setLive] = useState({});
-  const [histories, setHistories] = useState({ day: [], week: [], month: [], quarter: [] });
+  const [histories, setHistories] = useState({ day: [] });
+  const [assetHistoryReal, setAssetHistoryReal] = useState([]); // 真實每日資產紀錄 [{date, value}]
+  const lastHistPersistRef = useRef(0);
   const [heroView, setHeroView] = useState("overview");
   const [chartRange, setChartRange] = useState("day");
   const [assetMarketTab, setAssetMarketTab] = useState("TW");
@@ -187,6 +179,7 @@ export default function App() {
       let ex = [];
       let lg = [];
       let presets = [];
+      let assetHist = [];
       try {
         const r = await storageGet("holdings");
         if (r && r.value) hs = JSON.parse(r.value);
@@ -212,35 +205,25 @@ export default function App() {
         const r5 = await storageGet("expensePresets");
         if (r5 && r5.value) presets = JSON.parse(r5.value);
       } catch (e) { /* 尚無資料，預設為空 */ }
+      try {
+        const r6 = await storageGet("assetHistory");
+        if (r6 && r6.value) assetHist = JSON.parse(r6.value);
+      } catch (e) { /* 尚無資料，預設為空 */ }
 
       const liveInit = {};
       hs.forEach((h) => {
-        let startPrice = h.cost;
-        let prevClose = h.cost;
-        if (h.symbol === "2603" && hs === DEFAULT_HOLDINGS) {
-          prevClose = h.cost * 1.03;
-          startPrice = prevClose * 0.92;
-        }
-        liveInit[h.id] = { price: startPrice, prevClose, alertDismissed: false };
+        liveInit[h.id] = { price: h.cost, prevClose: h.cost, alertDismissed: false };
       });
-      const total0 = hs.reduce((s, h) => s + (liveInit[h.id]?.price ?? h.cost) * h.qty, 0);
-
-      const dayHist = [];
-      let v = total0 * (0.95 + Math.random() * 0.03);
-      for (let i = 14; i >= 0; i--) {
-        v = v * (1 + (Math.random() - 0.48) * 0.01);
-        dayHist.push({ t: `D-${i}`, v: Math.round(i === 0 ? total0 : v) });
-      }
-      const weekHist = buildDailyHistory(7, total0, 1, 0.02);
-      const monthHist = buildDailyHistory(30, total0, 1, 0.018);
-      const quarterHist = buildDailyHistory(13, total0, 7, 0.045);
+      const fxInit = (m) => (m === "US" ? usd : 1);
+      const total0 = hs.reduce((s, h) => s + (liveInit[h.id]?.price ?? h.cost) * h.qty * fxInit(h.market), 0);
 
       setHoldings(hs);
       setLive(liveInit);
       setThreshold(th);
       setUsdRate(usd);
       setApiBaseUrl(api);
-      setHistories({ day: dayHist, week: weekHist, month: monthHist, quarter: quarterHist });
+      setHistories({ day: [{ t: nowLabel(), v: Math.round(total0) }] });
+      setAssetHistoryReal(assetHist);
       setExpenses(ex);
       setLog(lg);
       setExpensePresets(presets);
@@ -262,6 +245,9 @@ export default function App() {
   }, []);
   const persistExpensePresets = useCallback(async (p) => {
     try { await storageSet("expensePresets", JSON.stringify(p)); } catch (e) { /* 略過儲存失敗 */ }
+  }, []);
+  const persistAssetHistory = useCallback(async (h) => {
+    try { await storageSet("assetHistory", JSON.stringify(h)); } catch (e) { /* 略過儲存失敗 */ }
   }, []);
 
   useEffect(() => {
@@ -343,22 +329,52 @@ export default function App() {
     return () => clearInterval(fxInterval);
   }, [loaded, apiBaseUrl]);
 
+  // 「每日」的即時走勢：每次報價更新就補一個真實的當下總資產（含匯率換算），不是模擬資料
   useEffect(() => {
     if (!loaded) return;
-    const total = holdings.reduce((s, h) => s + (live[h.id]?.price ?? h.cost) * h.qty, 0);
+    const total = holdings.reduce((s, h) => {
+      const price = live[h.id]?.price ?? h.cost;
+      const fx = h.market === "US" ? usdRate : 1;
+      return s + price * h.qty * fx;
+    }, 0);
     if (total <= 0) return;
     const t = setTimeout(() => {
-      setHistories((prev) => {
-        const day = [...prev.day, { t: nowLabel(), v: Math.round(total) }].slice(-30);
-        const patchLast = (arr) => arr.length
-          ? [...arr.slice(0, -1), { ...arr[arr.length - 1], v: Math.round(total) }]
-          : arr;
-        return { day, week: patchLast(prev.week), month: patchLast(prev.month), quarter: patchLast(prev.quarter) };
-      });
+      setHistories((prev) => ({ day: [...prev.day, { t: nowLabel(), v: Math.round(total) }].slice(-60) }));
     }, 50);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live]);
+  }, [live, holdings, usdRate, loaded]);
+
+  // 每天記錄一次真實總資產快照（供每週/每月/每季走勢使用），雲端儲存做節流避免寫入過於頻繁
+  useEffect(() => {
+    if (!loaded) return;
+    const total = holdings.reduce((s, h) => {
+      const price = live[h.id]?.price ?? h.cost;
+      const fx = h.market === "US" ? usdRate : 1;
+      return s + price * h.qty * fx;
+    }, 0);
+    if (total <= 0) return;
+    const today = todayStr();
+    const roundedVal = Math.round(total);
+    setAssetHistoryReal((prev) => {
+      const idx = prev.findIndex((p) => p.date === today);
+      let next;
+      let isNewDay = false;
+      if (idx >= 0) {
+        if (prev[idx].value === roundedVal) return prev;
+        next = [...prev];
+        next[idx] = { date: today, value: roundedVal };
+      } else {
+        next = [...prev, { date: today, value: roundedVal }].slice(-400);
+        isNewDay = true;
+      }
+      const now = Date.now();
+      if (isNewDay || now - lastHistPersistRef.current > 5 * 60 * 1000) {
+        lastHistPersistRef.current = now;
+        persistAssetHistory(next);
+      }
+      return next;
+    });
+  }, [live, holdings, usdRate, loaded]);
 
   if (!loaded) {
     return <div className="pw-loading">載入資料中…</div>;
@@ -409,6 +425,12 @@ export default function App() {
   });
   const twTotalValue = rows.filter((r) => (r.market || "TW") === "TW").reduce((s, r) => s + r.valueTWD, 0);
   const usTotalValue = rows.filter((r) => r.market === "US").reduce((s, r) => s + r.valueTWD, 0);
+
+  // ---- 資產走勢：每週/每月/每季改用真實累積的每日資產紀錄 ----
+  const trendChartData = chartRange === "day"
+    ? histories.day
+    : assetHistoryReal.slice(-RANGE_DAYS[chartRange]).map((p) => ({ t: dateStrToLabel(p.date), v: p.value }));
+  const trendHasEnoughData = chartRange === "day" || assetHistoryReal.length >= 2;
 
   // ---- 消費紀錄計算 ----
   const selectedMonthKey = selectedYear + "-" + String(selectedMonthNum).padStart(2, "0");
@@ -518,12 +540,10 @@ export default function App() {
 
     if (holding) {
       if (entry.action === "買入") {
-        // 先把「原本這筆買入」的影響從目前持股扣掉，回推出這筆交易發生前的股數與成本
         const totalCostAfter = holding.cost * holding.qty;
         const totalQtyAfter = holding.qty;
         const totalCostBefore = totalCostAfter - entry.price * entry.qty;
         const totalQtyBefore = totalQtyAfter - entry.qty;
-        // 再套用修改後的新數字
         const totalQtyNew = totalQtyBefore + newQty;
         const totalCostNew = totalCostBefore + newPrice * newQty;
         const newCostBasis = totalQtyNew > 0 ? totalCostNew / totalQtyNew : 0;
@@ -539,7 +559,6 @@ export default function App() {
           persistHoldings(newHoldings);
         }
       } else {
-        // 賣出不影響成本價，先把原本賣出的股數加回來，再扣掉修改後的股數
         const qtyAfterReverse = holding.qty + entry.qty;
         const qtyFinal = qtyAfterReverse - newQty;
         if (qtyFinal <= 0) {
@@ -952,26 +971,33 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <div style={{ width: "100%", height: 220 }}>
-                  <ResponsiveContainer>
-                    <AreaChart data={histories[chartRange]} margin={{ top: 6, right: 10, left: -10, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="pwFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#C1671E" stopOpacity={0.45} />
-                          <stop offset="100%" stopColor="#C1671E" stopOpacity={0.02} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid stroke="#332C22" vertical={false} />
-                      <XAxis dataKey="t" tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={{ stroke: "#332C22" }} tickLine={false} minTickGap={24} />
-                      <YAxis tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={false} tickLine={false} width={54}
-                        tickFormatter={(v) => (v / 1000).toFixed(0) + "k"} />
-                      <Tooltip formatter={(v) => money(v)} labelStyle={{ fontSize: 12, color: "#141210" }}
-                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #332C22", background: "#1E1B17", color: "#F1EAE0" }}
-                        itemStyle={{ color: "#F1EAE0" }} />
-                      <Area type="monotone" dataKey="v" stroke="#E38A38" strokeWidth={2} fill="url(#pwFill)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
+                {trendHasEnoughData ? (
+                  <div style={{ width: "100%", height: 220 }}>
+                    <ResponsiveContainer>
+                      <AreaChart data={trendChartData} margin={{ top: 6, right: 10, left: -10, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="pwFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#C1671E" stopOpacity={0.45} />
+                            <stop offset="100%" stopColor="#C1671E" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#332C22" vertical={false} />
+                        <XAxis dataKey="t" tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={{ stroke: "#332C22" }} tickLine={false} minTickGap={24} />
+                        <YAxis tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={false} tickLine={false} width={58}
+                          tickFormatter={(v) => (v / 1000).toFixed(1) + "k"} />
+                        <Tooltip formatter={(v) => money(v)} labelStyle={{ fontSize: 12, color: "#141210" }}
+                          contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #332C22", background: "#1E1B17", color: "#F1EAE0" }}
+                          itemStyle={{ color: "#F1EAE0" }} />
+                        <Area type="monotone" dataKey="v" stroke="#E38A38" strokeWidth={2} fill="url(#pwFill)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="pw-empty">
+                    累積資料中，之後會顯示完整走勢。系統從今天開始每天記錄一次真實總資產，
+                    等累積幾天的紀錄後，這個區間就會顯示出來。
+                  </div>
+                )}
               </div>
             )}
 
@@ -1362,7 +1388,8 @@ export default function App() {
                   總資產市值、銀行別損益、標的佔比都會依此把美股換算成新台幣後再加總；
                   「股票現價」表格裡的美股金額仍以美元原幣顯示。
                   倉位資料（股票、股數、成本、銀行）會保存下來，重新開啟仍會保留。
-                  每週／每月／每季走勢為模擬歷史資料，僅供介面展示參考。
+                  資產走勢的每日/每週/每月/每季走勢，都是從你開始使用這個 App 後每天自動記錄的真實總資產，不是模擬資料；
+                  剛開始使用時因為累積天數還不夠，週/月/季會先顯示「累積資料中」的提示，之後會自動補齊。
                 </p>
               </div>
             </div>
@@ -1450,8 +1477,8 @@ export default function App() {
                     <BarChart data={monthlyBarData} margin={{ top: 6, right: 10, left: -10, bottom: 0 }}>
                       <CartesianGrid stroke="#332C22" vertical={false} />
                       <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={{ stroke: "#332C22" }} tickLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={false} tickLine={false} width={54}
-                        tickFormatter={(v) => (v / 1000).toFixed(0) + "k"} />
+                      <YAxis tick={{ fontSize: 10, fill: "#9A9086" }} axisLine={false} tickLine={false} width={58}
+                        tickFormatter={(v) => (v / 1000).toFixed(1) + "k"} />
                       <Tooltip formatter={(v) => money(v)}
                         contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #332C22", background: "#1E1B17", color: "#F1EAE0" }}
                         itemStyle={{ color: "#F1EAE0" }} cursor={{ fill: "rgba(193,103,30,0.08)" }} />
