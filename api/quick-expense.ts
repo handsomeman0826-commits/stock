@@ -43,12 +43,18 @@ export default async function handler(req: any, res: any) {
       return res.status(401).json({ success: false, message: "驗證失敗，請確認捷徑裡的 key 是否正確" });
     }
 
-    const amount = parseFloat((req.query.amount || "").toString());
+    const rawAmount = (req.query.amount || "").toString();
+    // 去除可能夾帶的空白、中括號、逗號等干擾字元，只留下數字跟小數點
+    const cleanedAmount = rawAmount.replace(/[^\d.]/g, "");
+    const amount = parseFloat(cleanedAmount);
     const category = (req.query.category || "雜費").toString().trim();
     const note = (req.query.note || "").toString().trim();
 
     if (!amount || amount <= 0 || Number.isNaN(amount)) {
-      return res.status(400).json({ success: false, message: "金額不正確，請確認有講清楚數字" });
+      return res.status(400).json({
+        success: false,
+        message: `金額不正確，請確認有講清楚數字（實際收到的內容：「${rawAmount}」）`,
+      });
     }
 
     const raw = await redis.get("app:expenses");
